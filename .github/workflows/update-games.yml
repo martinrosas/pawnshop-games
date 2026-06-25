@@ -1,0 +1,89 @@
+name: Update Daily Games
+
+on:
+  schedule:
+    - cron: '0 14 * * *'  # Runs at 9am ET / 6am PT every day
+  workflow_dispatch:        # Also lets you run it manually
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Fetch today's games and build HTML
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          DISPLAY_DATE=$(date -u +"%A, %B %-d, %Y")
+
+          fetch_games() {
+            LEAGUE_ID=$1
+            LEAGUE_NAME=$2
+            RESULT=$(curl -s "https://www.thesportsdb.com/api/v1/json/123/eventsday.php?d=${TODAY}&l=${LEAGUE_ID}")
+            echo "$RESULT" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+events = data.get('events') or []
+for e in events:
+    if e.get('dateEvent') == '${TODAY}':
+        home = e.get('strHomeTeam','')
+        away = e.get('strAwayTeam','')
+        time_raw = e.get('strTime','')
+        try:
+            from datetime import datetime
+            t = datetime.strptime(time_raw[:5], '%H:%M')
+            time_str = t.strftime('%-I:%M %p') + ' ET'
+        except:
+            time_str = time_raw
+        print(f'<div class=\"game\"><div class=\"league\">${LEAGUE_NAME}</div><div class=\"matchup\">{away} vs {home}</div><div class=\"time\">{time_str}</div></div>')
+"
+          }
+
+          # Priority sports — June/July 2026
+          SOCCER=$(fetch_games "4956" "FIFA World Cup 2026")   # FIFA World Cup 2026
+          MLB=$(fetch_games "4424" "MLB")                       # Baseball
+          WNBA=$(fetch_games "4411" "WNBA")                    # WNBA
+          PGA=$(fetch_games "4401" "PGA Tour")                 # Golf - PGA
+          LPGA=$(fetch_games "4686" "LPGA Tour")               # Golf - LPGA
+          TENNIS=$(fetch_games "4681" "Wimbledon")             # Tennis - Wimbledon
+
+          ALL_GAMES="${SOCCER}${MLB}${WNBA}${PGA}${LPGA}${TENNIS}"
+
+          if [ -z "$(echo $ALL_GAMES | tr -d '[:space:]')" ]; then
+            CONTENT="<p class='no-games'>No major games scheduled today — but Pawn Shop will always have something worth watching.</p>"
+          else
+            CONTENT="$ALL_GAMES"
+          fi
+
+          cat > index.html << HTMLEOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pawn Shop – Today's Games</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+    h1 { font-size: 26px; margin-bottom: 4px; }
+    .date { color: #888; margin-bottom: 24px; font-size: 15px; }
+    .game { padding: 14px 0; border-bottom: 1px solid #eee; }
+    .league { font-weight: bold; color: #c0392b; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .matchup { font-size: 20px; font-weight: bold; }
+    .time { color: #555; font-size: 14px; margin-top: 4px; }
+    .no-games { color: #888; font-size: 17px; }
+  </style>
+</head>
+<body>
+  <h1>Pawn Shop — Games Today</h1>
+  <p class="date">${DISPLAY_DATE}</p>
+  ${CONTENT}
+</body>
+</html>
+HTMLEOF
+
+      - name: Commit and push updated HTML
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add index.html
+          git commit -m "Daily games update $(date -u +%Y-%m-%d)" || echo "No changes to commit"
+          git push
